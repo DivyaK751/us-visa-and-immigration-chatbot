@@ -235,29 +235,29 @@ def call_gemini(system: str, user_message: str, max_tokens: int = 800) -> str:
 
 def get_response(user_message: str) -> dict:
     # 1. Crisis — highest priority, no LLM call
-    # if check_crisis(user_message):
-    #     return {
-    #         "response": (
-    #             "It sounds like you may be in a stressful or urgent immigration situation. "
-    #             "Please reach out to a licensed immigration attorney immediately. "
-    #             "For emergency legal assistance, contact the National Immigration Legal Services Center "
-    #             "at immigrationadvocates.org or call your local legal aid office. "
-    #             "If you are in immediate danger, please call 911."
-    #         ),
-    #         "category": "crisis",
-    #     }
+    if check_crisis(user_message):
+        return {
+            "response": (
+                "It sounds like you may be in a stressful or urgent immigration situation. "
+                "Please reach out to a licensed immigration attorney immediately. "
+                "For emergency legal assistance, contact the National Immigration Legal Services Center "
+                "at immigrationadvocates.org or call your local legal aid office. "
+                "If you are in immediate danger, please call 911."
+            ),
+            "category": "crisis",
+        }
 
-    # # 2. Fraud — no LLM call
-    # if check_fraud(user_message):
-    #     return {
-    #         "response": (
-    #             "I'm not able to assist with requests involving document fraud, misrepresentation, "
-    #             "or illegal immigration methods. These actions carry serious legal consequences including "
-    #             "permanent immigration bars and criminal charges. "
-    #             "If you have concerns about your immigration status, please consult a licensed immigration attorney."
-    #         ),
-    #         "category": "fraud",
-    #     }
+    # 2. Fraud — no LLM call
+    if check_fraud(user_message):
+        return {
+            "response": (
+                "I'm not able to assist with requests involving document fraud, misrepresentation, "
+                "or illegal immigration methods. These actions carry serious legal consequences including "
+                "permanent immigration bars and criminal charges. "
+                "If you have concerns about your immigration status, please consult a licensed immigration attorney."
+            ),
+            "category": "fraud",
+        }
 
     def check_crisis(text: str) -> bool:
         text_lower = text.lower()
@@ -296,3 +296,9 @@ async def chat(request: Request):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8080))
+    uvicorn.run(app, host="0.0.0.0", port=port)
