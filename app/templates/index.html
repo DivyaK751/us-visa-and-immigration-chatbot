@@ -242,6 +242,17 @@
 
     .welcome h2 { color: #1e293b; font-size: 1.1rem; margin-bottom: 8px; }
     .welcome p { color: #64748b; font-size: 0.88rem; }
+
+    .message ol, .message ul {
+      padding-left: 20px;
+      margin: 6px 0;
+    }
+
+    .message li {
+      margin-bottom: 4px;
+      line-height: 1.5;
+    }
+
   </style>
 </head>
 <body>
@@ -315,6 +326,32 @@
     sendMessage();
   }
 
+  function formatMessage(text) {
+    // Bold: **text**
+    text = text.replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>');
+    
+    // Numbered list: lines starting with "1. ", "2. " etc
+    text = text.replace(/((\d+\.\s+.+\n?)+)/g, (match) => {
+      const items = match.trim().split('\n').map(line =>
+        `<li>${line.replace(/^\d+\.\s+/, '')}</li>`
+      ).join('');
+      return `<ol>${items}</ol>`;
+    });
+
+    // Bullet list: lines starting with "- " or "• "
+    text = text.replace(/((\-\s+.+\n?)+)/g, (match) => {
+      const items = match.trim().split('\n').map(line =>
+        `<li>${line.replace(/^[-•]\s+/, '')}</li>`
+      ).join('');
+      return `<ul>${items}</ul>`;
+    });
+
+    // Line breaks for remaining newlines
+    text = text.replace(/\n/g, '<br/>');
+
+    return text;
+  }
+
   function appendMessage(text, role, category) {
     // Remove welcome screen on first message
     const welcome = messagesEl.querySelector('.welcome');
@@ -331,8 +368,12 @@
     label.textContent = role === 'user' ? 'You' : 'VizaBot';
     div.appendChild(label);
 
+    // const content = document.createElement('div');
+    // content.textContent = text;
+    // div.appendChild(content);
+
     const content = document.createElement('div');
-    content.textContent = text;
+    content.innerHTML = formatMessage(text);
     div.appendChild(content);
 
     messagesEl.appendChild(div);
