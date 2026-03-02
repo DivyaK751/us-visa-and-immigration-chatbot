@@ -9,23 +9,17 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-# ── Vertex AI setup (uses Application Default Credentials via gcloud auth) ───
+# ── Vertex AI setup ───────────────────────────────────────────────────────────
 GCP_PROJECT  = os.environ["GCP_PROJECT"]
 GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
 MODEL_ID     = "gemini-2.5-flash"
 
-
-# New google-genai SDK — point it at Vertex AI
-client = genai.Client(
-    vertexai=True,
-    project=GCP_PROJECT,
-    location=GCP_LOCATION,
-)
+client = genai.Client(vertexai=True, project=GCP_PROJECT, location=GCP_LOCATION)
 
 app = FastAPI(title="US Visa Immigration Chatbot")
 templates = Jinja2Templates(directory="app/templates")
 
-# ── Positive constraints (what the bot CAN answer) ──────────────────────────
+# ── System prompt ─────────────────────────────────────────────────────────────
 SYSTEM_PROMPT = """You are VizaBot, an expert US immigration and visa information assistant.
 
 You provide accurate, factual information about:
@@ -38,10 +32,32 @@ You provide accurate, factual information about:
 - Common USCIS forms (I-20, DS-160, I-485, I-130, etc.)
 - Student, work, tourist, family, and investment visa pathways
 
-When you are unsure or when a question requires case-specific legal judgment, respond with:
+## Response quality requirements
+- Always give COMPLETE, detailed answers — never give one-line or vague responses
+- When explaining differences between visa types, cover BOTH sides clearly
+- Always include specific details: form numbers, time limits, eligibility criteria, fees where relevant
+- Structure your answer clearly if multiple points need to be covered
+- For simple definitions, aim for 3-5 sentences
+- For comparisons or multi-part questions, aim for 1-2 short paragraphs
+- Never write more than 150 words unless the question genuinely requires it
+
+## Escape hatch — use SPARINGLY
+Only use this response when the question asks you to evaluate a SPECIFIC PERSONAL CASE
+(e.g. "Will I get approved?", "Am I eligible based on my situation?"):
 "I can provide general information, but this question requires personalized legal advice. Please consult a licensed immigration attorney."
 
-Few-shot examples:
+NEVER use the escape hatch for:
+- General factual questions about visa types, rules, or processes
+- Questions about consequences of overstaying or losing status — for these, ALWAYS explain: (1) the specific legal bars and penalties, (2) available legal remedies or pathways, and THEN recommend an attorney
+- Questions about what options exist after a job loss or visa issue
+For these, always give a complete factual answer covering consequences AND options.
+
+## Key facts to always get right
+- H-1B holders have a 60-day grace period AFTER job loss during which their status remains valid
+- Overstaying 180+ days triggers a 3-year reentry bar; overstaying 1+ year triggers a 10-year bar
+- Always explain consequences AND available options before recommending an attorney
+
+## Few-shot examples
 
 Q: What is an F-1 visa?
 A: The F-1 visa is a nonimmigrant student visa that allows foreign nationals to study at accredited US colleges, universities, seminaries, conservatories, academic high schools, or language training programs. To qualify, you must be enrolled full-time, demonstrate sufficient funds to cover tuition and living expenses, have a residence abroad you do not intend to abandon, and receive a Form I-20 from your school. The visa is tied to your program duration (Duration of Status, or D/S).
@@ -58,18 +74,28 @@ A: A US visa is a travel document that allows you to seek entry to the United St
 Always answer based on official USCIS, DOS, and CBP policies. If policies may have changed, note that the user should verify with uscis.gov or travel.state.gov.
 """
 
-# ── Out-of-scope prompt (redirect) ───────────────────────────────────────────
-OUT_OF_SCOPE_PROMPT = """You are VizaBot. The user has asked something outside your expertise.
+# ── Out-of-scope prompt ───────────────────────────────────────────────────────
+OUT_OF_SCOPE_PROMPT = """
+You are VizaBot, a specialized assistant for US visa and immigration topics ONLY.
 
-Respond warmly and redirect. You only help with:
-- US visa types and categories
-- Application requirements and documents
-- Processing times and fees
-- Eligibility criteria
-- Interview processes
-- Green card and citizenship pathways
+The user has asked something outside your expertise. You MUST:
+1. Say in ONE sentence that this topic is outside your scope
+2. Tell them what you CAN help with (see list below)
+3. Invite them to ask an immigration question
 
-For this question, politely explain you can only assist with US visa and immigration topics, and suggest they seek an appropriate resource."""
+The topics you CAN help with are:
+- US visa types and categories (F-1, H-1B, B-2, O-1, L-1, TN, EB-5, E-2, K-1, J-1, etc.)
+- Visa application requirements and supporting documents
+- USCIS processing times and filing fees
+- Eligibility criteria for each visa category
+- The US consulate interview process
+- Green card pathways and adjustment of status
+- US citizenship and naturalization
+- DACA, OPT, CPT, and work authorization
+
+Keep your response to 2-3 sentences.
+Instead, suggest they consult an appropriate resource for their actual question (Google, a doctor, a financial advisor, etc.).
+"""
 
 # ── Python backstop: keyword/regex detection ─────────────────────────────────
 CRISIS_KEYWORDS = [
@@ -94,6 +120,7 @@ OUT_OF_SCOPE_PATTERNS = [
     r"\b(relationship|dating|divorce(?! visa))\b",
     r"\b(medical diagnosis|symptoms|disease|cancer|prescri)\b",
     r"\b(tax (return|filing|refund))\b",
+    r"\b(start|register|incorporate|launch|open) (a )?(small |new )?(business|company|startup|llc|corporation)\b",
 ]
 
 IMMIGRATION_KEYWORDS = [
@@ -107,13 +134,11 @@ IMMIGRATION_KEYWORDS = [
 
 
 def check_crisis(text: str) -> bool:
-    text_lower = text.lower()
-    return any(re.search(p, text_lower) for p in CRISIS_KEYWORDS)
+    return any(re.search(p, text.lower()) for p in CRISIS_KEYWORDS)
 
 
 def check_fraud(text: str) -> bool:
-    text_lower = text.lower()
-    return any(re.search(p, text_lower) for p in FRAUD_KEYWORDS)
+    return any(re.search(p, text.lower()) for p in FRAUD_KEYWORDS)
 
 
 def check_out_of_scope(text: str) -> bool:
@@ -125,7 +150,6 @@ def check_out_of_scope(text: str) -> bool:
 
 
 def call_gemini(system: str, user_message: str, max_tokens: int = 800) -> str:
-    """Call Gemini 2.0 Flash via the new google-genai SDK on Vertex AI."""
     response = client.models.generate_content(
         model=MODEL_ID,
         contents=user_message,
@@ -139,36 +163,43 @@ def call_gemini(system: str, user_message: str, max_tokens: int = 800) -> str:
 
 
 def get_response(user_message: str) -> dict:
-    """Main response function with backstop logic."""
+    # 1. Crisis — highest priority, no LLM call
+    # if check_crisis(user_message):
+    #     return {
+    #         "response": (
+    #             "It sounds like you may be in a stressful or urgent immigration situation. "
+    #             "Please reach out to a licensed immigration attorney immediately. "
+    #             "For emergency legal assistance, contact the National Immigration Legal Services Center "
+    #             "at immigrationadvocates.org or call your local legal aid office. "
+    #             "If you are in immediate danger, please call 911."
+    #         ),
+    #         "category": "crisis",
+    #     }
 
-    # 1. Crisis detection — highest priority (no LLM call needed)
-    if check_crisis(user_message):
-        return {
-            "response": (
-                "It sounds like you may be in a stressful or urgent immigration situation. "
-                "Please reach out to a licensed immigration attorney immediately. "
-                "For emergency legal assistance, contact the National Immigration Legal Services Center "
-                "at immigrationadvocates.org or call your local legal aid office. "
-                "If you are in immediate danger, please call 911."
-            ),
-            "category": "crisis",
-        }
+    # # 2. Fraud — no LLM call
+    # if check_fraud(user_message):
+    #     return {
+    #         "response": (
+    #             "I'm not able to assist with requests involving document fraud, misrepresentation, "
+    #             "or illegal immigration methods. These actions carry serious legal consequences including "
+    #             "permanent immigration bars and criminal charges. "
+    #             "If you have concerns about your immigration status, please consult a licensed immigration attorney."
+    #         ),
+    #         "category": "fraud",
+    #     }
 
-    # 2. Fraud/illegal activity detection (no LLM call needed)
-    if check_fraud(user_message):
-        return {
-            "response": (
-                "I'm not able to assist with requests involving document fraud, misrepresentation, "
-                "or illegal immigration methods. These actions carry serious legal consequences including "
-                "permanent immigration bars and criminal charges. "
-                "If you have concerns about your immigration status, please consult a licensed immigration attorney."
-            ),
-            "category": "fraud",
-        }
+    def check_crisis(text: str) -> bool:
+        text_lower = text.lower()
+        return any(re.search(p, text_lower) for p in CRISIS_KEYWORDS)
 
-    # 3. Out-of-scope → redirect with a lighter Gemini call
+
+    def check_fraud(text: str) -> bool:
+        text_lower = text.lower()
+        return any(re.search(p, text_lower) for p in FRAUD_KEYWORDS)
+
+    # 3. Out-of-scope — lighter LLM call with redirect prompt
     if check_out_of_scope(user_message):
-        text = call_gemini(OUT_OF_SCOPE_PROMPT, user_message, max_tokens=300)
+        text = call_gemini(OUT_OF_SCOPE_PROMPT, user_message, max_tokens=800)
         return {"response": text, "category": "out_of_scope"}
 
     # 4. Normal in-domain response
@@ -187,7 +218,6 @@ async def chat(request: Request):
     user_message = body.get("message", "").strip()
     if not user_message:
         return JSONResponse({"error": "Empty message"}, status_code=400)
-
     result = get_response(user_message)
     return JSONResponse(result)
 
