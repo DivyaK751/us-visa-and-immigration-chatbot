@@ -85,6 +85,22 @@ GOLDEN_CASES = [
         "deterministic_keywords": ["K-1", "CR-1", "resident", "marry"],
     },
     {
+        "id": "in_16",
+        "category": "in_domain",
+        "question": "What is the difference between immigrant and nonimmigrant visas?",
+        "expected_answer": (
+            "Nonimmigrant visas are for temporary stays in the US for specific purposes like tourism, study, or work. "
+            "Immigrant visas are for those intending to live permanently in the US and lead to a green card. "
+            "Nonimmigrant visa holders must maintain nonimmigrant intent."
+        ),
+        "rubric": (
+            "Response should: (1) define nonimmigrant visa as temporary, "
+            "(2) define immigrant visa as leading to permanent residence, "
+            "(3) mention nonimmigrant intent requirement."
+        ),
+        "deterministic_keywords": ["nonimmigrant", "immigrant", "permanent", "visa"],
+    },
+    {
         "id": "in_07",
         "category": "in_domain",
         "question": "What is the O-1 visa and who qualifies?",
