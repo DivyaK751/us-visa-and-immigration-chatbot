@@ -1,7 +1,7 @@
 import os
 import re
-import vertexai
-from vertexai.generative_models import GenerativeModel, GenerationConfig
+from google import genai
+from google.genai import types
 from fastapi import FastAPI, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from fastapi.templating import Jinja2Templates
@@ -10,11 +10,17 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # ── Vertex AI setup (uses Application Default Credentials via gcloud auth) ───
-GCP_PROJECT = os.environ["GCP_PROJECT"]     # e.g. "my-gcp-project"
+GCP_PROJECT  = os.environ["GCP_PROJECT"]
 GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
-MODEL_ID = "gemini-2.0-flash"
+MODEL_ID     = "gemini-2.5-flash"
 
-vertexai.init(project=GCP_PROJECT, location=GCP_LOCATION)
+
+# New google-genai SDK — point it at Vertex AI
+client = genai.Client(
+    vertexai=True,
+    project=GCP_PROJECT,
+    location=GCP_LOCATION,
+)
 
 app = FastAPI(title="US Visa Immigration Chatbot")
 templates = Jinja2Templates(directory="app/templates")
@@ -119,13 +125,16 @@ def check_out_of_scope(text: str) -> bool:
 
 
 def call_gemini(system: str, user_message: str, max_tokens: int = 800) -> str:
-    """Call Gemini 2.0 Flash via Vertex AI with a system instruction and user message."""
-    model = GenerativeModel(
-        model_name=MODEL_ID,
-        system_instruction=system,
-        generation_config=GenerationConfig(max_output_tokens=max_tokens, temperature=0.2),
+    """Call Gemini 2.0 Flash via the new google-genai SDK on Vertex AI."""
+    response = client.models.generate_content(
+        model=MODEL_ID,
+        contents=user_message,
+        config=types.GenerateContentConfig(
+            system_instruction=system,
+            max_output_tokens=max_tokens,
+            temperature=0.2,
+        ),
     )
-    response = model.generate_content(user_message)
     return response.text
 
 

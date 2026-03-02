@@ -16,24 +16,27 @@ import json
 import httpx
 import time
 from pathlib import Path
+from dotenv import load_dotenv
+
+load_dotenv()  # Load .env file if present
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from eval.golden_dataset import GOLDEN_CASES
-import vertexai
-from vertexai.generative_models import GenerativeModel, GenerationConfig
-
-from dotenv import load_dotenv
-load_dotenv()
+from google import genai
+from google.genai import types
 
 # ── Vertex AI setup ───────────────────────────────────────────────────────────
 GCP_PROJECT = os.environ["GCP_PROJECT"]
 GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
-# JUDGE_MODEL_ID = "gemini-2.0-flash"
 JUDGE_MODEL_ID = "gemini-2.0-flash"
 APP_URL = os.getenv("APP_URL", "http://localhost:8000")
 
-vertexai.init(project=GCP_PROJECT, location=GCP_LOCATION)
+judge_client = genai.Client(
+    vertexai=True,
+    project=GCP_PROJECT,
+    location=GCP_LOCATION,
+)
 
 # ── Color output ──────────────────────────────────────────────────────────────
 GREEN  = "\033[92m"
@@ -114,46 +117,143 @@ def deterministic_check(case: dict, response: str) -> tuple[bool, str]:
 
 
 # ── 2. Gemini-as-Judge (MaaJ) ─────────────────────────────────────────────────
-JUDGE_SYSTEM = """You are an expert evaluator assessing a US immigration chatbot called VizaBot.
-Be strict but fair. Respond ONLY with valid JSON and nothing else:
-{"score": <0-10>, "reasoning": "<one sentence>", "passed": <true or false>}
-passed is true if score >= 6."""
+# ── Judge system prompt ───────────────────────────────────────────────────────
+# Separate prompts for golden vs rubric evals so each has focused criteria
+
+JUDGE_SYSTEM_GOLDEN = """
+You are a strict but fair expert evaluator for VizaBot, a US immigration and visa information chatbot.
+
+Your job is to compare the chatbot's actual response against a reference (expected) answer and score it.
+
+## Scoring Scale (0-10)
+- 9-10: Factually correct, complete, covers all key points from the reference answer, clear language
+- 7-8:  Mostly correct, covers the main points, minor omissions or slight inaccuracies
+- 5-6:  Partially correct, covers some key points but misses important facts
+- 3-4:  Mostly incorrect or incomplete, only 1-2 facts match the reference
+- 0-2:  Completely wrong, off-topic, or refused to answer when it should have
+
+## What to penalize
+- Missing a key fact that is in the reference answer (-1 to -2 per missed fact)
+- Factual errors about US immigration law or policy (-2 per error)
+- Vague or generic answers that do not address the specific question (-2)
+- Recommending the user consult an attorney for a straightforward factual question (-1)
+
+## What NOT to penalize
+- Different wording or phrasing from the reference answer (paraphrasing is fine)
+- Extra helpful context beyond the reference answer (bonus information is good)
+- Slightly different structure or formatting
+
+## Output format
+Respond ONLY with valid JSON, no extra text:
+{"score": <integer 0-10>, "reasoning": "<one concise sentence explaining the score>", "passed": <true if score >= 7, else false>}
+
+## Few-shot examples
+
+Example 1 - Score 9:
+Question: What is an F-1 visa?
+Expected: F-1 is a nonimmigrant student visa requiring full-time enrollment, Form I-20, and financial proof.
+Actual: The F-1 visa is a nonimmigrant visa for international students studying full-time at accredited US schools. You need an I-20 from your school and must show you can fund your studies.
+Output: {"score": 9, "reasoning": "Covers all key facts from reference with accurate details", "passed": true}
+
+Example 2 - Score 5:
+Question: What is an F-1 visa?
+Expected: F-1 is a nonimmigrant student visa requiring full-time enrollment, Form I-20, and financial proof.
+Actual: The F-1 visa lets international students study in the US.
+Output: {"score": 5, "reasoning": "Correct but missing I-20 requirement and financial proof details", "passed": false}
+
+Example 3 - Score 1:
+Question: What is an F-1 visa?
+Expected: F-1 is a nonimmigrant student visa requiring full-time enrollment, Form I-20, and financial proof.
+Actual: I cannot help with that question.
+Output: {"score": 1, "reasoning": "Refused to answer a straightforward factual question it should handle", "passed": false}
+""".strip()
 
 
-def _judge_call(prompt: str) -> dict:
-    model = GenerativeModel(
-        model_name=JUDGE_MODEL_ID,
-        system_instruction=JUDGE_SYSTEM,
-        generation_config=GenerationConfig(max_output_tokens=200, temperature=0.0),
+JUDGE_SYSTEM_RUBRIC = """
+You are a strict but fair expert evaluator for VizaBot, a US immigration and visa information chatbot.
+
+Your job is to grade the chatbot's response against a rubric — a checklist of criteria the answer should meet.
+
+## Scoring Scale (0-10)
+Score based on how many rubric criteria are met:
+- 9-10: Meets ALL criteria clearly and accurately
+- 7-8:  Meets most criteria (missing 1 minor point)
+- 5-6:  Meets about half the criteria
+- 3-4:  Meets only 1-2 criteria
+- 0-2:  Meets none of the criteria or is completely off-topic
+
+## Scoring rules
+- Each rubric criterion missed costs proportional points based on total criteria count
+- Partial credit is allowed if a criterion is addressed but vaguely
+- Extra information beyond the rubric is fine and should not be penalized
+- If the response is a refusal for an in-domain question, score it 0-2
+
+## Output format
+Respond ONLY with valid JSON, no extra text:
+{"score": <integer 0-10>, "reasoning": "<one concise sentence listing which criteria were met or missed>", "passed": <true if score >= 7, else false>}
+
+## Few-shot examples
+
+Example 1 - Score 10:
+Question: What documents are needed for a B-2 tourist visa?
+Rubric: (1) DS-160 form (2) valid passport (3) proof of financial support (4) ties to home country (5) consulate interview
+Actual: You need to fill out the DS-160 form, have a valid passport, show bank statements as proof of funds, demonstrate ties to your home country like a job or family, and attend an interview at the US consulate.
+Output: {"score": 10, "reasoning": "All 5 rubric criteria clearly addressed with accurate details", "passed": true}
+
+Example 2 - Score 6:
+Question: What documents are needed for a B-2 tourist visa?
+Rubric: (1) DS-160 form (2) valid passport (3) proof of financial support (4) ties to home country (5) consulate interview
+Actual: You need a valid passport and to fill out the DS-160 form and show you have enough money.
+Output: {"score": 6, "reasoning": "Met 3 of 5 criteria, missing ties to home country and consulate interview", "passed": false}
+
+Example 3 - Score 2:
+Question: What documents are needed for a B-2 tourist visa?
+Rubric: (1) DS-160 form (2) valid passport (3) proof of financial support (4) ties to home country (5) consulate interview
+Actual: You should consult an immigration attorney for help with your visa application.
+Output: {"score": 2, "reasoning": "Deflected to attorney referral instead of answering a factual document question", "passed": false}
+""".strip()
+
+
+def _judge_call(system_prompt: str, user_prompt: str) -> dict:
+    """Call Gemini as a judge with a given system and user prompt."""
+    resp = judge_client.models.generate_content(
+        model=JUDGE_MODEL_ID,
+        contents=user_prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=system_prompt,
+            max_output_tokens=300,
+            temperature=0.0,
+        ),
     )
-    resp = model.generate_content(prompt)
-    raw = resp.text.strip().removeprefix("```json").removeprefix("```").removesuffix("```").strip()
+    raw = resp.text.strip()
+    # Strip markdown code fences if Gemini wraps in them
+    raw = raw.removeprefix("```json").removeprefix("```").removesuffix("```").strip()
     try:
         return json.loads(raw)
     except Exception:
-        return {"score": 0, "reasoning": "Judge parse error", "passed": False}
+        return {"score": 0, "reasoning": f"Judge parse error: {raw[:80]}", "passed": False}
 
 
 def maaj_golden(question: str, expected: str, actual: str) -> dict:
+    """Golden-reference MaaJ: score actual response vs expected reference answer."""
     prompt = (
         f"Question: {question}\n\n"
-        f"Expected answer (reference): {expected}\n\n"
-        f"Actual response: {actual}\n\n"
-        "Score the actual response vs the expected on accuracy and completeness (0-10). "
-        'Respond ONLY with JSON: {"score": <0-10>, "reasoning": "<one sentence>", "passed": <true/false>}'
+        f"Reference answer: {expected}\n\n"
+        f"Chatbot actual response: {actual}\n\n"
+        "Score the chatbot response against the reference answer using the scoring scale."
     )
-    return _judge_call(prompt)
+    return _judge_call(JUDGE_SYSTEM_GOLDEN, prompt)
 
 
 def maaj_rubric(question: str, rubric: str, actual: str) -> dict:
+    """Rubric-based MaaJ: grade actual response against a checklist of criteria."""
     prompt = (
         f"Question: {question}\n\n"
-        f"Grading rubric: {rubric}\n\n"
-        f"Actual response: {actual}\n\n"
-        "Grade the response against each rubric criterion (0-10). "
-        'Respond ONLY with JSON: {"score": <0-10>, "reasoning": "<one sentence>", "passed": <true/false>}'
+        f"Grading rubric (criteria to check): {rubric}\n\n"
+        f"Chatbot actual response: {actual}\n\n"
+        "Grade the response against each rubric criterion using the scoring scale."
     )
-    return _judge_call(prompt)
+    return _judge_call(JUDGE_SYSTEM_RUBRIC, prompt)
 
 
 # ── 3. Get response from chatbot ──────────────────────────────────────────────
