@@ -23,9 +23,13 @@ from eval.golden_dataset import GOLDEN_CASES
 import vertexai
 from vertexai.generative_models import GenerativeModel, GenerationConfig
 
+from dotenv import load_dotenv
+load_dotenv()
+
 # ── Vertex AI setup ───────────────────────────────────────────────────────────
 GCP_PROJECT = os.environ["GCP_PROJECT"]
 GCP_LOCATION = os.getenv("GCP_LOCATION", "us-central1")
+# JUDGE_MODEL_ID = "gemini-2.0-flash"
 JUDGE_MODEL_ID = "gemini-2.0-flash"
 APP_URL = os.getenv("APP_URL", "http://localhost:8000")
 
