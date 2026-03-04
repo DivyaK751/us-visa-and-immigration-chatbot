@@ -3,7 +3,7 @@
 > Project 1 submission for Agentic AI for Analytics
 
 **Topic:** US Visa & Immigration Information  
-**Model:** Gemini 2.0 Flash via Vertex AI
+**Model:** Gemini 2.5 Flash via Vertex AI
 
 
 **Live URL:** [Demo](https://usvisachatbot-510506868826.us-central1.run.app/) 
