@@ -2,7 +2,7 @@
 
 > Project 1 submission for Agentic AI for Analytics
 
-**Live URL:** `https://YOUR-GCP-URL.run.app` ← replace after deployment  
+**Live URL:** `[https://YOUR-GCP-URL.run.app](https://usvisachatbot-510506868826.us-central1.run.app/` 
 **Topic:** US Visa & Immigration Information  
 **Model:** Gemini 2.0 Flash via Vertex AI
 
