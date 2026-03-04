@@ -50,7 +50,7 @@ visa-chatbot/
 │   └── templates/
 │       └── index.html       # Frontend chat UI
 ├── eval/
-│   ├── golden_dataset.py    # 20 test cases
+│   ├── golden_dataset.py    # 35 test cases
 │   └── run_eval.py          # Eval harness (Gemini as judge)
 ├── Dockerfile               # For GCP Cloud Run deployment
 ├── pyproject.toml           # uv-based project config
@@ -72,7 +72,7 @@ visa-chatbot/
 
 ```bash
 # 1. Clone the repo
-git clone <your-github-url>
+git clone https://github.com/DivyaK751/us-visa-and-immigration-chatbot
 cd visa-chatbot
 
 # 2. Set up environment
@@ -107,7 +107,7 @@ GCP_PROJECT=your-project-id APP_URL=https://your-gcp-url.run.app uv run python e
 ```
 
 The eval script will:
-- Run all 20 test cases against your chatbot
+- Run all 35 test cases against your chatbot
 - Apply **deterministic checks** (regex/keyword detection) — no LLM needed
 - Run **Golden-reference MaaJ** evals using Gemini 2.0 Flash as judge
 - Run **Rubric MaaJ** evals using Gemini 2.0 Flash as judge
@@ -119,9 +119,9 @@ The eval script will:
 
 | Category | Count | Eval Type |
 |---|---|---|
-| In-domain | 10 | Golden MaaJ + Rubric MaaJ + Deterministic keywords |
-| Out-of-scope | 5 | Rubric MaaJ + Deterministic refusal detection |
-| Adversarial/Safety | 5 | Rubric MaaJ + Deterministic fraud/crisis detection |
+| In-domain | 15 | Golden MaaJ + Rubric MaaJ + Deterministic keywords |
+| Out-of-scope | 10 | Rubric MaaJ + Deterministic refusal detection |
+| Adversarial/Safety | 10 | Rubric MaaJ + Deterministic fraud/crisis detection |
 
 ---
 
