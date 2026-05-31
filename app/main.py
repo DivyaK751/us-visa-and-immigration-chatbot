@@ -1,5 +1,6 @@
 import os
 import re
+from uuid import uuid4
 from google import genai
 from google.genai import types
 from fastapi import FastAPI, Request
@@ -18,6 +19,10 @@ client = genai.Client(vertexai=True, project=GCP_PROJECT, location=GCP_LOCATION)
 
 app = FastAPI(title="US Visa Immigration Chatbot")
 templates = Jinja2Templates(directory="app/templates")
+
+# Session store: session_id -> list of {"role": str, "text": str}
+sessions: dict[str, list] = {}
+MAX_HISTORY = 20  # keep last 20 messages (10 turns)
 
 # ── System prompt ─────────────────────────────────────────────────────────────
 
@@ -164,10 +169,14 @@ def check_out_of_scope(text: str) -> bool:
     return False
 
 
-def call_gemini(system: str, user_message: str, max_tokens: int = 800) -> str:
+def call_gemini(system: str, history: list[dict], max_tokens: int = 800) -> str:
+    contents = [
+        types.Content(role=msg["role"], parts=[types.Part(text=msg["text"])])
+        for msg in history
+    ]
     response = client.models.generate_content(
         model=MODEL_ID,
-        contents=user_message,
+        contents=contents,
         config=types.GenerateContentConfig(
             system_instruction=system,
             max_output_tokens=max_tokens,
@@ -177,40 +186,49 @@ def call_gemini(system: str, user_message: str, max_tokens: int = 800) -> str:
     return response.text
 
 
-def get_response(user_message: str) -> dict:
+def _record(history: list, user_text: str, model_text: str) -> None:
+    history.append({"role": "user", "text": user_text})
+    history.append({"role": "model", "text": model_text})
+    del history[:-MAX_HISTORY]
+
+
+def get_response(session_id: str, user_message: str) -> dict:
+    history = sessions.setdefault(session_id, [])
+
     # 1. Crisis — highest priority, no LLM call
     if check_crisis(user_message):
-        return {
-            "response": (
-                "It sounds like you may be in a stressful or urgent immigration situation. "
-                "Please reach out to a licensed immigration attorney immediately. "
-                "For emergency legal assistance, contact the National Immigration Legal Services Center "
-                "at immigrationadvocates.org or call your local legal aid office. "
-                "If you are in immediate danger, please call 911."
-            ),
-            "category": "crisis",
-        }
+        reply = (
+            "It sounds like you may be in a stressful or urgent immigration situation. "
+            "Please reach out to a licensed immigration attorney immediately. "
+            "For emergency legal assistance, contact the National Immigration Legal Services Center "
+            "at immigrationadvocates.org or call your local legal aid office. "
+            "If you are in immediate danger, please call 911."
+        )
+        _record(history, user_message, reply)
+        return {"response": reply, "category": "crisis"}
 
     # 2. Fraud — no LLM call
     if check_fraud(user_message):
-        return {
-            "response": (
-                "I'm not able to assist with requests involving document fraud, misrepresentation, "
-                "or illegal immigration methods. These actions carry serious legal consequences including "
-                "permanent immigration bars and criminal charges. "
-                "If you have concerns about your immigration status, please consult a licensed immigration attorney."
-            ),
-            "category": "fraud",
-        }
+        reply = (
+            "I'm not able to assist with requests involving document fraud, misrepresentation, "
+            "or illegal immigration methods. These actions carry serious legal consequences including "
+            "permanent immigration bars and criminal charges. "
+            "If you have concerns about your immigration status, please consult a licensed immigration attorney."
+        )
+        _record(history, user_message, reply)
+        return {"response": reply, "category": "fraud"}
 
-
-    # 3. Out-of-scope — lighter LLM call with redirect prompt
+    # 3. Out-of-scope — single-turn redirect (no history context needed)
     if check_out_of_scope(user_message):
-        text = call_gemini(OUT_OF_SCOPE_PROMPT, user_message, max_tokens=800)
+        text = call_gemini(OUT_OF_SCOPE_PROMPT, [{"role": "user", "text": user_message}], max_tokens=800)
+        _record(history, user_message, text)
         return {"response": text, "category": "out_of_scope"}
 
-    # 4. Normal in-domain response
-    text = call_gemini(SYSTEM_PROMPT, user_message, max_tokens=800)
+    # 4. Normal in-domain response — pass full history for context
+    history.append({"role": "user", "text": user_message})
+    text = call_gemini(SYSTEM_PROMPT, history, max_tokens=800)
+    history.append({"role": "model", "text": text})
+    del history[:-MAX_HISTORY]
     return {"response": text, "category": "in_domain"}
 
 
@@ -223,10 +241,20 @@ async def index(request: Request):
 async def chat(request: Request):
     body = await request.json()
     user_message = body.get("message", "").strip()
+    session_id = body.get("session_id") or str(uuid4())
     if not user_message:
         return JSONResponse({"error": "Empty message"}, status_code=400)
-    result = get_response(user_message)
+    result = get_response(session_id, user_message)
+    result["session_id"] = session_id
     return JSONResponse(result)
+
+
+@app.post("/reset")
+async def reset(request: Request):
+    body = await request.json()
+    session_id = body.get("session_id", "")
+    sessions.pop(session_id, None)
+    return JSONResponse({"status": "ok"})
 
 
 @app.get("/health")
