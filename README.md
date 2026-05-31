@@ -6,7 +6,7 @@
 **Model:** Gemini 2.5 Flash via Vertex AI
 
 
-**Live URL:** [Demo](https://usvisachatbot-510506868826.us-central1.run.app/) 
+**Live URL:** [Demo](https://visa-chatbot-510506868826.us-central1.run.app/) 
 
 ---
 
