@@ -53,6 +53,21 @@
     .chat-header h1 { font-size: 1.3rem; font-weight: 700; }
     .chat-header p { font-size: 0.82rem; opacity: 0.85; margin-top: 2px; }
 
+    .new-chat-btn {
+      margin-left: auto;
+      background: rgba(255,255,255,0.15);
+      color: white;
+      border: 1.5px solid rgba(255,255,255,0.4);
+      border-radius: 8px;
+      padding: 7px 14px;
+      font-size: 0.83rem;
+      font-family: inherit;
+      cursor: pointer;
+      transition: background 0.2s;
+      white-space: nowrap;
+    }
+    .new-chat-btn:hover { background: rgba(255,255,255,0.28); }
+
     .status-dot {
       width: 9px; height: 9px;
       background: #4ade80;
@@ -265,6 +280,7 @@
       <h1>VizaBot</h1>
       <p><span class="status-dot"></span>US Immigration & Visa Assistant</p>
     </div>
+    <button class="new-chat-btn" onclick="newChat()" title="Start a new conversation">+ New Chat</button>
   </div>
 
   <!-- Quick topics -->
@@ -308,6 +324,8 @@
   const messagesEl = document.getElementById('messages');
   const inputEl = document.getElementById('userInput');
   const sendBtn = document.getElementById('sendBtn');
+
+  let sessionId = crypto.randomUUID();
 
   function autoResize(el) {
     el.style.height = '46px';
@@ -408,7 +426,7 @@
       const res = await fetch('/chat', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ message: text }),
+        body: JSON.stringify({ message: text, session_id: sessionId }),
       });
       const data = await res.json();
       hideTyping();
@@ -420,6 +438,18 @@
       sendBtn.disabled = false;
       inputEl.focus();
     }
+  }
+
+  function newChat() {
+    sessionId = crypto.randomUUID();
+    messagesEl.innerHTML = `
+      <div class="welcome">
+        <h2>Welcome to VizaBot 👋</h2>
+        <p>Ask me anything about US visa types, application requirements,<br/>processing times, eligibility, and immigration pathways.</p>
+      </div>`;
+    inputEl.value = '';
+    inputEl.style.height = '46px';
+    inputEl.focus();
   }
 </script>
 </body>
